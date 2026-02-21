@@ -1,0 +1,8 @@
+thesis_finance_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '/opt/duckdb/thesis.duckdb') }}"
+      threads: 4
+      schema: main

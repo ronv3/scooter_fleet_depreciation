@@ -1,0 +1,30 @@
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Airflow
+airflow/logs/
+airflow/config/*.cfg
+
+# DuckDB database files
+duckdb/*.duckdb
+duckdb/*.wal
+
+# Exports
+exports/*.csv
+exports/*.xml
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/

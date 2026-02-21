@@ -1,0 +1,22 @@
+name: "scooter_fleet_depreciation"
+version: "1.0.0"
+config-version: 2
+
+profile: "scooter_fleet_depreciation"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+
+models:
+  scooter_fleet_depreciation:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table
+
+seeds:
+  scooter_fleet_depreciation:
+    +schema: raw
