@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: int_journal_entries
+    description: >
+      Double-entry journal lines derived from rides. Each ride produces
+      3 lines (no coupon) or 4 lines (with coupon). Zero-amount lines
+      are excluded. Debits always equal credits per order_id.
+    columns:
+      - name: journal_entry_id
+        description: "Deterministic MD5 hash of order_id + line_type"
+        tests:
+          - not_null
+          - unique
+      - name: order_id
+        tests:
+          - not_null
+      - name: line_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['receivable', 'revenue', 'vat_payable', 'coupon_expense']
+      - name: entry_side
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['debit', 'credit']
+      - name: line_amount
+        description: "Always > 0 (zero-amount lines are filtered out)"
+        tests:
+          - not_null

@@ -18,10 +18,13 @@ Together they feed a dbt pipeline:
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import shutil
 import uuid
 from pathlib import Path
 from datetime import date
+from dateutil.relativedelta import relativedelta
 from typing import Dict, Tuple, List
 
 import numpy as np
@@ -33,16 +36,6 @@ import pandas as pd
 # ============================================================
 
 RANDOM_SEED = 42
-
-# Report period: January 2026
-RIDE_START = date(2026, 1, 1)
-RIDE_END_EXCLUSIVE = date(2026, 2, 1)
-
-RIDE_DATES = pd.date_range(
-    RIDE_START,
-    pd.Timestamp(RIDE_END_EXCLUSIVE) - pd.Timedelta(days=1),
-    freq="D",
-).date
 
 # 90 scooters: 30 per city
 SCOOTER_IDS = np.arange(1, 91, dtype=int)
@@ -89,6 +82,7 @@ COUPON_DISCOUNT_EUR = 3.00
 
 # Output
 OUTPUT_DIR = Path("data")
+SEED_DIR = Path("dbt/seeds")
 
 
 # ============================================================
@@ -179,11 +173,21 @@ def generate_non_overlapping_intervals(
 # RIDES GENERATION
 # ============================================================
 
-def generate_rides_df(seed: int = RANDOM_SEED) -> pd.DataFrame:
+def generate_rides_df(
+    seed: int = RANDOM_SEED,
+    ride_start: date = date(2026, 1, 1),
+    ride_end_exclusive: date = date(2026, 2, 1),
+) -> pd.DataFrame:
+    ride_dates = pd.date_range(
+        ride_start,
+        pd.Timestamp(ride_end_exclusive) - pd.Timedelta(days=1),
+        freq="D",
+    ).date
+
     rng = np.random.default_rng(seed)
     rows = []
 
-    for day in RIDE_DATES:
+    for day in ride_dates:
         for sid in SCOOTER_IDS:
             scooter_id = int(sid)
             n_rides = int(rng.integers(RIDES_PER_DAY_MIN, RIDES_PER_DAY_MAX + 1))
@@ -239,70 +243,52 @@ def generate_rides_df(seed: int = RANDOM_SEED) -> pd.DataFrame:
 # ACCOUNT MAPPING
 # ============================================================
 
-def generate_account_mapping_df() -> pd.DataFrame:
+def generate_account_mapping_df() -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Combined chart-of-accounts and journal-line-type mapping.
+    Returns two dataframes:
+      - account_mapping_df: line_type / country / account_code (join key to chart_of_accounts)
+      - chart_of_accounts_df: canonical account master (one row per account_code)
 
-    For each ride, the DWH creates 4 journal lines:
-      1. receivable   (DR)  — Accounts Receivable = sum_with_vat − coupon_amount
+    Journal lines per ride:
+      1. receivable    (DR)  — Accounts Receivable = sum_with_vat − coupon_amount
       2. coupon_expense (DR) — Marketing Expense   = coupon_amount (0 if none)
-      3. revenue       (CR)  — Ride Revenue        = amount (net, pre-VAT)
-      4. vat_payable   (CR)  — VAT Payable         = vat_amount
+      3. revenue        (CR) — Ride Revenue        = amount (net, pre-VAT)
+      4. vat_payable    (CR) — VAT Payable         = vat_amount
 
     Debits always equal credits:
       (sum_with_vat − coupon) + coupon = amount + vat ✓
-
-    The mapping is country-specific so that VAT and revenue can be
-    tracked per jurisdiction (different VAT rates, separate P&L lines).
     """
-    rows = []
-
     countries = ["Estonia", "Finland", "Latvia"]
     vat_account_codes = {"Estonia": "2101", "Finland": "2102", "Latvia": "2103"}
     revenue_account_codes = {"Estonia": "4101", "Finland": "4102", "Latvia": "4103"}
 
+    mapping_rows = []
+    account_rows: Dict[str, dict] = {}
+
+    def add_account(code: str, name: str, category: str, normal_side: str) -> None:
+        account_rows[code] = {
+            "account_code": code,
+            "account_name": name,
+            "account_category": category,
+            "normal_side": normal_side,
+        }
+
     for country in countries:
-        # 1. Accounts Receivable (same account across countries — single AR ledger)
-        rows.append({
-            "line_type": "receivable",
-            "country": country,
-            "account_code": "1200",
-            "account_name": "Accounts Receivable",
-            "account_category": "asset",
-            "normal_side": "debit",
-        })
+        mapping_rows.append({"line_type": "receivable",    "country": country, "account_code": "1200"})
+        mapping_rows.append({"line_type": "revenue",       "country": country, "account_code": revenue_account_codes[country]})
+        mapping_rows.append({"line_type": "vat_payable",   "country": country, "account_code": vat_account_codes[country]})
+        mapping_rows.append({"line_type": "coupon_expense","country": country, "account_code": "6200"})
 
-        # 2. Ride Revenue (country-specific for jurisdictional P&L)
-        rows.append({
-            "line_type": "revenue",
-            "country": country,
-            "account_code": revenue_account_codes[country],
-            "account_name": f"Ride Revenue - {country}",
-            "account_category": "revenue",
-            "normal_side": "credit",
-        })
+        add_account("1200", "Accounts Receivable",             "asset",     "debit")
+        add_account(revenue_account_codes[country], f"Ride Revenue - {country}", "revenue", "credit")
+        add_account(vat_account_codes[country],     f"VAT Payable - {country}",  "liability","credit")
+        add_account("6200", "Marketing Expense - Coupons",     "expense",   "debit")
 
-        # 3. VAT Payable (country-specific — different rates)
-        rows.append({
-            "line_type": "vat_payable",
-            "country": country,
-            "account_code": vat_account_codes[country],
-            "account_name": f"VAT Payable - {country}",
-            "account_category": "liability",
-            "normal_side": "credit",
-        })
+    # Retained Earnings is needed for balance sheet but has no journal line type
+    add_account("3000", "Retained Earnings", "equity", "credit")
 
-        # 4. Coupon / Marketing Expense (same account across countries)
-        rows.append({
-            "line_type": "coupon_expense",
-            "country": country,
-            "account_code": "6200",
-            "account_name": "Marketing Expense - Coupons",
-            "account_category": "expense",
-            "normal_side": "debit",
-        })
-
-    return pd.DataFrame(rows)
+    account_df = pd.DataFrame(sorted(account_rows.values(), key=lambda r: r["account_code"]))
+    return pd.DataFrame(mapping_rows), account_df
 
 
 # ============================================================
@@ -375,35 +361,75 @@ def run_validations(rides_df: pd.DataFrame, mapping_df: pd.DataFrame) -> Dict[st
 # CSV EXPORT
 # ============================================================
 
-def save_csvs(rides_df: pd.DataFrame, mapping_df: pd.DataFrame, output_dir: Path = OUTPUT_DIR) -> None:
+def save_csvs(
+    rides_df: pd.DataFrame,
+    mapping_df: pd.DataFrame,
+    accounts_df: pd.DataFrame,
+    output_dir: Path = OUTPUT_DIR,
+    seed_dir: Path = SEED_DIR,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    seed_dir.mkdir(parents=True, exist_ok=True)
 
     rides_out = rides_df.copy()
     for col in ["start_time", "end_time"]:
         rides_out[col] = pd.to_datetime(rides_out[col]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
+    # Write to data/ (archive / source-of-truth copy)
     rides_out.to_csv(output_dir / "rides.csv", index=False)
     mapping_df.to_csv(output_dir / "account_mapping.csv", index=False)
+    accounts_df.to_csv(output_dir / "chart_of_accounts.csv", index=False)
+
+    # Copy rides.csv to dbt/seeds/ so `dbt seed` picks it up.
+    # account_mapping and chart_of_accounts are static reference data
+    # and only need updating when the account structure changes.
+    shutil.copy2(output_dir / "rides.csv", seed_dir / "rides.csv")
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
+def _last_month_range() -> Tuple[date, date]:
+    today = date.today()
+    first_of_this_month = today.replace(day=1)
+    first_of_last_month = first_of_this_month - relativedelta(months=1)
+    return first_of_last_month, first_of_this_month
+
+
+def _parse_args() -> Tuple[date, date]:
+    parser = argparse.ArgumentParser(description="Generate scooter ride source data.")
+    parser.add_argument("--start-date", type=date.fromisoformat, help="Start date (inclusive), YYYY-MM-DD")
+    parser.add_argument("--end-date",   type=date.fromisoformat, help="End date (exclusive), YYYY-MM-DD")
+    args = parser.parse_args()
+
+    if args.start_date and args.end_date:
+        return args.start_date, args.end_date
+    if args.start_date or args.end_date:
+        parser.error("Provide both --start-date and --end-date, or neither.")
+    return _last_month_range()
+
+
 def main() -> None:
-    rides_df = generate_rides_df(seed=RANDOM_SEED)
-    mapping_df = generate_account_mapping_df()
+    ride_start, ride_end_exclusive = _parse_args()
+
+    rides_df = generate_rides_df(seed=RANDOM_SEED, ride_start=ride_start, ride_end_exclusive=ride_end_exclusive)
+    mapping_df, accounts_df = generate_account_mapping_df()
 
     validations = run_validations(rides_df, mapping_df)
 
-    save_csvs(rides_df, mapping_df, output_dir=OUTPUT_DIR)
+    save_csvs(rides_df, mapping_df, accounts_df, output_dir=OUTPUT_DIR)
 
+    print(f"Period: {ride_start} → {ride_end_exclusive} (exclusive)")
     print(f"Generated CSVs in: {OUTPUT_DIR.resolve()}")
     print(f"\n=== rides.csv: {len(rides_df):,} rows ===")
     print(rides_df.head(5).to_string(index=False))
 
     print(f"\n=== account_mapping.csv: {len(mapping_df)} rows ===")
     print(mapping_df.to_string(index=False))
+
+    print(f"\n=== chart_of_accounts.csv: {len(accounts_df)} rows ===")
+    print(accounts_df.to_string(index=False))
 
     print("\n=== Validation summary ===")
     all_ok = True

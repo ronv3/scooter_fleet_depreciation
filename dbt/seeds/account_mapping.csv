@@ -1,13 +1,13 @@
-line_type,country,account_code,account_name,account_category,normal_side
-receivable,Estonia,1200,Accounts Receivable,asset,debit
-revenue,Estonia,4101,Ride Revenue - Estonia,revenue,credit
-vat_payable,Estonia,2101,VAT Payable - Estonia,liability,credit
-coupon_expense,Estonia,6200,Marketing Expense - Coupons,expense,debit
-receivable,Finland,1200,Accounts Receivable,asset,debit
-revenue,Finland,4102,Ride Revenue - Finland,revenue,credit
-vat_payable,Finland,2102,VAT Payable - Finland,liability,credit
-coupon_expense,Finland,6200,Marketing Expense - Coupons,expense,debit
-receivable,Latvia,1200,Accounts Receivable,asset,debit
-revenue,Latvia,4103,Ride Revenue - Latvia,revenue,credit
-vat_payable,Latvia,2103,VAT Payable - Latvia,liability,credit
-coupon_expense,Latvia,6200,Marketing Expense - Coupons,expense,debit
+line_type,country,account_code
+receivable,Estonia,1200
+revenue,Estonia,4101
+vat_payable,Estonia,2101
+coupon_expense,Estonia,6200
+receivable,Finland,1200
+revenue,Finland,4102
+vat_payable,Finland,2102
+coupon_expense,Finland,6200
+receivable,Latvia,1200
+revenue,Latvia,4103
+vat_payable,Latvia,2103
+coupon_expense,Latvia,6200

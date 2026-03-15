@@ -1,6 +1,11 @@
 /*
     Staging: rides
+    ==============
     Clean types, add ride_date, normalise nulls for coupon fields.
+
+    Filters to the current reporting period using the start_date / end_date
+    vars.  When running via Airflow the DAG passes explicit dates;
+    when running ad-hoc the macros default to the current calendar month.
 */
 
 with source as (
@@ -45,6 +50,8 @@ staged as (
         country
 
     from source
+    where cast(start_time as date) >= {{ get_start_date() }}
+      and cast(start_time as date) <= {{ get_end_date() }}
 )
 
 select * from staged

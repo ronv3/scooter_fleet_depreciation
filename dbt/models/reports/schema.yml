@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: rpt_income_statement
+    description: >
+      Income statement (P&L) for the current reporting period.
+      Revenue - Expenses = Net Income. Uses net_balance for robustness.
+      Includes period_start and period_end columns for auditability.
+    columns:
+      - name: period_start
+        tests:
+          - not_null
+      - name: period_end
+        tests:
+          - not_null
+      - name: section
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Revenue', 'Expenses']
+      - name: account_code
+        tests:
+          - not_null
+      - name: amount
+        tests:
+          - not_null
+
+  - name: rpt_balance_sheet
+    description: >
+      Balance sheet as of the period end date (cumulative point-in-time).
+      Assets = Liabilities + Equity. equation_balanced flags any imbalance.
+      Includes report_date column showing the as-of date.
+    columns:
+      - name: report_date
+        tests:
+          - not_null
+      - name: section
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Assets', 'Liabilities', 'Equity']
+      - name: equation_balanced
+        description: "Must be true for every row — the accounting equation holds"

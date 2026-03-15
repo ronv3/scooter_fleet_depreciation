@@ -1,0 +1,73 @@
+version: 2
+
+models:
+  - name: stg_rides
+    description: >
+      Cleaned and typed ride billing records. Coupon fields normalised
+      (empty/None → NULL, amount → 0). ride_date derived from start_time.
+    columns:
+      - name: order_id
+        description: "Unique order identifier (UUID)"
+        tests:
+          - not_null
+          - unique
+      - name: ride_id
+        tests:
+          - not_null
+      - name: amount
+        description: "Net ride revenue before VAT (EUR)"
+        tests:
+          - not_null
+      - name: vat_amount
+        tests:
+          - not_null
+      - name: sum_with_vat_amount
+        tests:
+          - not_null
+      - name: country
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Estonia', 'Finland', 'Latvia']
+
+  - name: stg_account_mapping
+    description: >
+      Journal posting rules. Maps line_type + country → account_code.
+    columns:
+      - name: account_code
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_chart_of_accounts')
+              field: account_code
+      - name: line_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['receivable', 'revenue', 'vat_payable', 'coupon_expense']
+      - name: country
+        tests:
+          - not_null
+
+  - name: stg_chart_of_accounts
+    description: >
+      Master chart of accounts. One row per GL account with metadata.
+    columns:
+      - name: account_code
+        description: "Unique account identifier"
+        tests:
+          - not_null
+          - unique
+      - name: account_name
+        tests:
+          - not_null
+      - name: account_category
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['asset', 'liability', 'equity', 'revenue', 'expense']
+      - name: normal_side
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['debit', 'credit']

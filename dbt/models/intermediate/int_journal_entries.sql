@@ -1,12 +1,16 @@
 /*
     Intermediate: Journal Entries
     =============================
-    Explode each ride into 4 double-entry journal lines:
+    Explode each ride into double-entry journal lines.
 
-      Line 1  DR  Accounts Receivable   = sum_with_vat − coupon_amount
-      Line 2  DR  Coupon Expense         = coupon_amount  (0 when no coupon)
-      Line 3  CR  Ride Revenue           = amount         (net, pre-VAT)
-      Line 4  CR  VAT Payable            = vat_amount
+    Rides without a coupon produce 3 lines; rides with a coupon
+    produce 4 lines.  Zero-amount lines are never posted — this
+    is standard accounting practice.
+
+      DR  Accounts Receivable   = sum_with_vat − coupon_amount
+      DR  Coupon Expense         = coupon_amount  (only when coupon used)
+      CR  Ride Revenue           = amount         (net, pre-VAT)
+      CR  VAT Payable            = vat_amount
 
     Invariant:  total debits = total credits  per order_id
       (sum_with_vat − coupon) + coupon  =  amount + vat_amount  =  sum_with_vat
@@ -16,7 +20,7 @@ with rides as (
     select * from {{ ref('stg_rides') }}
 ),
 
--- Generate 4 lines per ride using a cross join with a line-type spine
+-- Spine of possible journal line types per ride
 line_types as (
     select 'receivable'     as line_type, 1 as line_number union all
     select 'coupon_expense' as line_type, 2 as line_number union all
@@ -63,3 +67,4 @@ select
     md5(cast(order_id as varchar) || '|' || cast(line_type as varchar)) as journal_entry_id,
     *
 from journal_lines
+where line_amount > 0

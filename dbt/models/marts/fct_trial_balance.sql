@@ -1,11 +1,19 @@
 /*
     Mart: Trial Balance
     ===================
-    Aggregate the general ledger into account-level totals.
-    The trial balance must satisfy:  total debits = total credits.
+    Aggregate the general ledger into account-level totals,
+    broken down by reporting_period (month).
 
-    This model provides a quick validation checkpoint and feeds
-    both the P&L and the Balance Sheet.
+    Rebuilt fully on every run from the entire GL. Since the GL
+    is incremental and accumulates data across periods, this
+    trial balance always reflects the complete picture.
+
+    The trial balance must satisfy per period:
+      total debits = total credits
+
+    Downstream reports filter this table:
+      - Income statement: current period only
+      - Balance sheet:    cumulative through current period end
 */
 
 with ledger as (
@@ -14,6 +22,7 @@ with ledger as (
 
 aggregated as (
     select
+        reporting_period,
         account_code,
         account_name,
         account_category,
@@ -28,6 +37,7 @@ aggregated as (
 
     from ledger
     group by
+        reporting_period,
         account_code,
         account_name,
         account_category,
@@ -36,4 +46,4 @@ aggregated as (
 )
 
 select * from aggregated
-order by account_code, country
+order by reporting_period, account_code, country

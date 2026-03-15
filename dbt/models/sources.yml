@@ -8,4 +8,10 @@ sources:
       - name: rides
         description: "Billing/invoicing records — one row per completed scooter ride"
       - name: account_mapping
-        description: "Chart of accounts + journal-line-type mapping for double-entry bookkeeping"
+        description: >
+          Journal posting rules — maps each transaction line type + country
+          to the GL account code it should post to.
+      - name: chart_of_accounts
+        description: >
+          Master chart of accounts — defines every GL account with its name,
+          category (asset/liability/equity/revenue/expense) and normal side.

@@ -2,6 +2,7 @@ version: 2
 
 seeds:
   - name: rides
+    description: "Billing records — one row per completed scooter ride"
     config:
       column_types:
         order_id: varchar
@@ -22,10 +23,21 @@ seeds:
         country: varchar
 
   - name: account_mapping
+    description: >
+      Journal posting rules — maps each line_type + country combination
+      to the GL account_code it should post to.
     config:
       column_types:
         line_type: varchar
         country: varchar
+        account_code: varchar
+
+  - name: chart_of_accounts
+    description: >
+      Master chart of accounts — defines every GL account with its name,
+      category (asset/liability/equity/revenue/expense) and normal side.
+    config:
+      column_types:
         account_code: varchar
         account_name: varchar
         account_category: varchar

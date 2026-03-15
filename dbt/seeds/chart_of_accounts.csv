@@ -1,0 +1,10 @@
+account_code,account_name,account_category,normal_side
+1200,Accounts Receivable,asset,debit
+2101,VAT Payable - Estonia,liability,credit
+2102,VAT Payable - Finland,liability,credit
+2103,VAT Payable - Latvia,liability,credit
+3000,Retained Earnings,equity,credit
+4101,Ride Revenue - Estonia,revenue,credit
+4102,Ride Revenue - Finland,revenue,credit
+4103,Ride Revenue - Latvia,revenue,credit
+6200,Marketing Expense - Coupons,expense,debit

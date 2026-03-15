@@ -3,17 +3,42 @@
     =====================
     Assets = Liabilities + Equity
 
+    This is a POINT-IN-TIME statement: it shows the cumulative
+    financial position as of the period end date.  All ledger
+    data from the beginning of time through end_date is included.
+
     In our simplified model:
-      - Assets     = Accounts Receivable (what customers owe / have paid)
+      - Assets      = Accounts Receivable (what customers owe / have paid)
       - Liabilities = VAT Payable (tax owed to government)
-      - Equity     = Retained Earnings = Revenue − Expenses (net income)
+      - Equity      = Retained Earnings = cumulative Revenue − Expenses
 
     The balance sheet equation MUST hold:
       Assets = Liabilities + Equity
 */
 
 with trial_balance as (
-    select * from {{ ref('fct_trial_balance') }}
+    -- Cumulative: everything up to and including the current period
+    select *
+    from {{ ref('fct_trial_balance') }}
+    where reporting_period <= date_trunc('month', {{ get_end_date() }})
+),
+
+-- Sum across all periods to get cumulative balances
+cumulative as (
+    select
+        account_code,
+        account_name,
+        account_category,
+        normal_side,
+        country,
+        sum(net_balance) as net_balance
+    from trial_balance
+    group by
+        account_code,
+        account_name,
+        account_category,
+        normal_side,
+        country
 ),
 
 -- Assets: accounts with category = 'asset', normal_side = debit
@@ -23,7 +48,7 @@ assets as (
         account_name,
         country,
         net_balance as balance   -- positive for debit-normal accounts
-    from trial_balance
+    from cumulative
     where account_category = 'asset'
 ),
 
@@ -34,21 +59,21 @@ liabilities as (
         account_name,
         country,
         -net_balance as balance  -- flip sign: credit-normal → positive
-    from trial_balance
+    from cumulative
     where account_category = 'liability'
 ),
 
--- Equity = Retained Earnings = Revenue - Expenses
+-- Equity = Retained Earnings = cumulative Revenue - Expenses
 -- Revenue: credit-normal (negative signed_amount) → flip to positive
 -- Expenses: debit-normal (positive signed_amount) → subtract
 retained_earnings as (
     select
         sum(case
-            when account_category = 'revenue' then -net_balance   -- credit → positive
-            when account_category = 'expense' then -net_balance   -- debit → negative (subtract)
+            when account_category = 'revenue' then -net_balance
+            when account_category = 'expense' then -net_balance
             else 0
         end) as balance
-    from trial_balance
+    from cumulative
     where account_category in ('revenue', 'expense')
 ),
 
@@ -84,6 +109,7 @@ totals as (
 )
 
 select
+    {{ get_end_date() }} as report_date,
     bs.*,
     t.total_assets,
     t.total_liabilities,

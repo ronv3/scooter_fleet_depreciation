@@ -2,10 +2,10 @@
     {%- set v = var('start_date', none) -%}
 
     {%- if v is not none and (v | trim) != '' -%}
-        cast('{{ v }}' as {{ dbt.type_date() }})
+        cast('{{ v }}' as date)
 
     {%- else -%}
-        cast( {{ dbt.date_trunc('month', dbt.current_timestamp()) }} as {{ dbt.type_date() }} )
+        cast(date_trunc('month', current_date) as date)
 
     {%- endif -%}
 {% endmacro %}

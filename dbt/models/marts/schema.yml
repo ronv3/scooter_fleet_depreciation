@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: fct_general_ledger
+    description: >
+      The single source of truth for all financial reporting. Materialized
+      as incremental with a delete+insert strategy per reporting period.
+      Each row is a fully attributed journal line with account metadata,
+      reporting_period, and loaded_at audit timestamp.
+    columns:
+      - name: journal_entry_id
+        description: "Deterministic MD5 hash of order_id + line_type — unique per journal line"
+        tests:
+          - not_null
+          - unique
+      - name: order_id
+        tests:
+          - not_null
+      - name: ride_date
+        tests:
+          - not_null
+      - name: reporting_period
+        description: "First day of the ride's month — partition / filter key"
+        tests:
+          - not_null
+      - name: account_code
+        description: "GL account code — never NULL due to INNER JOIN"
+        tests:
+          - not_null
+      - name: account_name
+        tests:
+          - not_null
+      - name: account_category
+        tests:
+          - not_null
+      - name: line_amount
+        tests:
+          - not_null
+      - name: signed_amount
+        tests:
+          - not_null
+      - name: loaded_at
+        description: "Timestamp when this row was inserted — audit metadata"
+        tests:
+          - not_null
+
+  - name: fct_trial_balance
+    description: >
+      Account-level aggregation of the general ledger, broken down by
+      reporting_period. Total debits must equal total credits per period.
+      Rebuilt fully on every run from the entire GL.
+    columns:
+      - name: reporting_period
+        tests:
+          - not_null
+      - name: account_code
+        tests:
+          - not_null
+      - name: total_debit
+        tests:
+          - not_null
+      - name: total_credit
+        tests:
+          - not_null
+      - name: net_balance
+        tests:
+          - not_null
