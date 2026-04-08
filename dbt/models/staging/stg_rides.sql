@@ -11,6 +11,21 @@
     Filters to the current reporting period using the start_date / end_date
     vars.  When running via Airflow the DAG passes explicit dates;
     when running ad-hoc the macros default to the current calendar month.
+
+    Guardrails (defensive staging logic):
+      1. NULL amount filter — rows with NULL financial amounts are excluded
+         (simulates payment gateway timeouts / missing data).
+      2. Outlier filter — rows where the amount exceeds 50 EUR are excluded.
+         Normal rides cost at most ~8.70 EUR (35 min × 0.22 + 1.00 unlock);
+         a 100× decimal-point error produces amounts > 100 EUR.
+         The 50 EUR threshold is well above any legitimate ride cost while
+         catching extreme outliers.
+      3. Deduplication — when multiple rows share the same order_id (duplicate
+         event delivery), only one copy is retained via ROW_NUMBER().
+
+    These guardrails have NO effect on clean data: clean data contains no
+    NULLs in financial columns, no amounts above 50 EUR, and no duplicate
+    order_ids.
 */
 
 {{
@@ -26,6 +41,40 @@
 
 with source as (
     select * from {{ source('data_lake', 'rides') }}
+),
+
+-- Guardrail 1: filter rows with NULL financial amounts
+-- (real-world analogue: payment gateway timeout / missing data)
+not_null_filter as (
+    select *
+    from source
+    where amount is not null
+      and vat_amount is not null
+      and sum_with_vat_amount is not null
+),
+
+-- Guardrail 2: filter extreme outlier amounts
+-- Normal max ride cost: 35 min × 0.22 + 1.00 = 8.70 EUR
+-- A 100× decimal error produces amounts > 100 EUR
+-- Threshold of 50 EUR catches outliers with a wide safety margin
+-- (real-world analogue: decimal point error in source system)
+outlier_filter as (
+    select *
+    from not_null_filter
+    where cast(amount as decimal(12,2)) <= 50.00
+),
+
+-- Guardrail 3: deduplicate by order_id
+-- If duplicate events arrive (e.g. Kafka redelivery), keep only one copy
+-- Deterministic: picks the first row by start_time, ride_id
+-- (real-world analogue: duplicate event delivery from messaging systems)
+deduplicated as (
+    select *,
+        row_number() over (
+            partition by order_id
+            order by start_time, ride_id
+        ) as _dedup_rn
+    from outlier_filter
 ),
 
 staged as (
@@ -68,9 +117,18 @@ staged as (
         -- Audit metadata
         current_timestamp as loaded_at
 
-    from source
-    where cast(start_time as date) >= {{ get_start_date() }}
+    from deduplicated
+    where _dedup_rn = 1
+      and cast(start_time as date) >= {{ get_start_date() }}
       and cast(start_time as date) <= {{ get_end_date() }}
 )
 
-select * from staged
+select
+    order_id, ride_id, scooter_id,
+    start_time, end_time, ride_date,
+    duration_min, distance_km,
+    amount, vat_rate, vat_amount, sum_with_vat_amount, currency,
+    coupon_code, coupon_amount,
+    city, country,
+    loaded_at
+from staged

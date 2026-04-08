@@ -374,6 +374,11 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   │   └── monthly_financial_pipeline.py # Monthly orchestration DAG
 │   ├── logs/
 │   └── plugins/
+├── benchmarks/                           # Scalability and evaluation scripts
+│   ├── baseline_income_statement.py      # Python baseline: CSV → income statement
+│   ├── run_benchmarks.py                 # Multi-scale timing harness
+│   ├── generate_figure.py               # Scalability chart (log-log, grayscale)
+│   └── run_fault_evaluation.sh          # End-to-end fault injection evaluation
 ├── compose.yml                           # Docker Compose (Airflow + Postgres)
 ├── .env.example                          # Environment template
 ├── data/                                 # Generated source CSVs (archive)
@@ -390,7 +395,7 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   ├── models/
 │   │   ├── sources.yml                   # dbt source declarations
 │   │   ├── staging/
-│   │   │   ├── stg_rides.sql
+│   │   │   ├── stg_rides.sql             # Incremental + guardrails (NULL, outlier, dedup)
 │   │   │   ├── stg_account_mapping.sql   # Journal posting rules
 │   │   │   ├── stg_chart_of_accounts.sql # Account master
 │   │   │   └── schema.yml
@@ -420,7 +425,8 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 ├── duckdb/                               # DuckDB database file
 ├── exports/                              # Exported reports
 ├── scripts/
-│   └── create_source_data.py             # Source data generator
+│   ├── create_source_data.py             # Source data generator
+│   └── inject_faults.py                 # Data quality fault injection
 └── README.md
 ```
 
@@ -443,6 +449,193 @@ This project is a demonstration for a Bachelor's thesis. Several simplifications
 **Retained earnings.** The balance sheet computes equity as "Retained Earnings = cumulative Revenue - Expenses." In a multi-year system, retained earnings would carry forward from prior fiscal years with period-closing entries. Since this model starts from a clean slate and does not include dividends or other equity transactions, the calculation is equivalent.
 
 **DuckDB as warehouse.** DuckDB is an embedded analytical database, chosen for portability (no server setup). A production financial data warehouse would typically use Snowflake, BigQuery, Redshift, or a similar cloud warehouse with role-based access control, audit logging, and concurrent query support.
+
+---
+
+## Evaluation: Scalability Benchmarks
+
+The `benchmarks/` directory measures execution time at increasing data scales, comparing three approaches:
+
+| # | Approach | What it does |
+|---|----------|-------------|
+| 1 | **Python baseline** | Reads rides.csv with pandas, computes income statement. No database, no layers — the shortest path from CSV to report. |
+| 2 | **dbt full-refresh** | The thesis pipeline processing all data from scratch (seed + run all models). |
+| 3 | **dbt incremental** | The thesis pipeline processing only December, with Jan–Nov already loaded. How the pipeline is designed to run in production. |
+
+Data is scaled by increasing the fleet size. Four scales at roughly 10× increments: 90 scooters (~131K rides), 900 (~1.3M), 4,500 (~6.6M), and 9,000 (~13.1M). Each approach is timed 3 times per scale; the median is reported.
+
+### Prerequisites
+
+Ensure the Docker containers are running (see [Setup](#setup)).
+
+### Step-by-step: Run the benchmarks
+
+All commands are run from your **host terminal** in the project root directory.
+
+**Step 1 — Validate the Python baseline produces correct totals (quick sanity check):**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/baseline_income_statement.py --validate"
+```
+
+Expected output: income statement printed, followed by `VALIDATION PASSED`. The totals must be: Revenue 536,507.46 / Expenses 10,188.00 / Net Income 526,319.46.
+
+**Step 2 — Run the full benchmark suite:**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/run_benchmarks.py"
+```
+
+This will take a while (potentially 30+ minutes at the largest scales). For a quick test with just the two smallest scales:
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/run_benchmarks.py --scales 90,900 --runs 3"
+```
+
+To run only the Python baseline (no dbt, much faster):
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/run_benchmarks.py --skip-dbt"
+```
+
+**Step 3 — Generate the scalability figure:**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/generate_figure.py"
+```
+
+This reads `benchmarks/results.csv` and produces `benchmarks/scalability.png` and `benchmarks/scalability.pdf`. If `results.csv` doesn't exist yet, it generates a placeholder figure with example data.
+
+### Output files
+
+| File | Description |
+|------|-------------|
+| `benchmarks/results.csv` | Timing data: fleet_size, ride_count, approach, median_seconds |
+| `benchmarks/results.json` | Detailed results with all individual run times |
+| `benchmarks/results.specs.json` | Machine specs (CPU, RAM, Python/dbt/DuckDB versions) |
+| `benchmarks/scalability.png` | Log-log chart (for presentation) |
+| `benchmarks/scalability.pdf` | Log-log chart (for thesis, grayscale-safe) |
+
+### What to expect
+
+At small scale (90 scooters), the Python script is faster — it has no overhead. As scale increases, the dbt full-refresh time grows linearly (it processes the entire year each time), while the dbt incremental time stays roughly flat (it only processes December). The crossover point — where incremental becomes faster than the Python script — is the key finding.
+
+After running, record the machine specs from `results.specs.json` for the thesis.
+
+---
+
+## Evaluation: Fault Injection (Data Quality)
+
+The fault injection evaluation tests whether the pipeline's data quality mechanisms work against imperfect data.
+
+### Fault types
+
+| Fault | Real-world analogue | Handling | Mechanism |
+|-------|-------------------|----------|-----------|
+| NULL financial amounts | Payment gateway timeout | **Prevention** — staging filters them out | `WHERE amount IS NOT NULL` |
+| Extreme outlier (100×) | Decimal point error | **Prevention** — staging filters them out | `WHERE amount <= 50.00` |
+| Duplicate rides | Duplicate event delivery (Kafka) | **Prevention** — staging deduplicates | `ROW_NUMBER() OVER (PARTITION BY order_id ...)` |
+| Invalid country | Misconfigured source | **Detection** — `accepted_values` test halts pipeline | Existing dbt test on `country` column |
+
+### Staging guardrails (added to `stg_rides.sql`)
+
+Three defensive CTEs were added to the staging model. They have **no effect on clean data** (verified: max clean ride amount is 8.70 EUR, no NULLs, no duplicate order_ids):
+
+1. `not_null_filter` — excludes rows with NULL `amount`, `vat_amount`, or `sum_with_vat_amount`
+2. `outlier_filter` — excludes rows where `amount > 50 EUR` (catches 100× decimal errors; threshold is 6× above max legitimate ride)
+3. `deduplicated` — keeps one row per `order_id` via `ROW_NUMBER()`, ordered by `start_time, ride_id`
+
+### Step-by-step: Run the fault evaluation
+
+All commands are run from your **host terminal**.
+
+**Option A — Automated end-to-end evaluation (recommended):**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && bash benchmarks/run_fault_evaluation.sh"
+```
+
+This script does everything:
+1. Generates clean data and runs the full pipeline (baseline)
+2. Injects prevention faults (null, outlier, duplicate)
+3. Re-seeds and re-runs the pipeline
+4. Verifies all 69 tests still pass and income statement totals are unchanged
+5. Restores clean data
+6. Injects the detection fault (invalid country "Atlantis")
+7. Re-seeds and re-runs — expects the `accepted_values` test to **fail**
+8. Restores clean data
+
+**Option B — Manual step-by-step:**
+
+```bash
+# 1. Generate clean baseline data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python scripts/create_source_data.py --start-date 2026-01-01 --end-date 2027-01-01"
+
+# 2. Seed and run pipeline on clean data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt seed --full-refresh --profiles-dir /opt/dbt"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt run --full-refresh --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt test --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+
+# 3. Inject prevention-mode faults
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python scripts/inject_faults.py --fault-types null,outlier,duplicate --seed 123"
+
+# 4. Re-seed and re-run on faulted data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt seed --full-refresh --profiles-dir /opt/dbt"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt run --full-refresh --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+
+# 5. Verify tests pass (should all pass — guardrails cleaned the faults)
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt test --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+
+# 6. Restore clean data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && cp data/rides.csv.clean_backup data/rides.csv && \
+    cp dbt/seeds/rides.csv.clean_backup dbt/seeds/rides.csv"
+
+# 7. Inject detection-mode fault (invalid country)
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python scripts/inject_faults.py --fault-types country --seed 123"
+
+# 8. Re-seed and re-run — expect test FAILURE
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt seed --full-refresh --profiles-dir /opt/dbt"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt run --full-refresh --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'" || true
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt test --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'" || echo "EXPECTED FAILURE"
+
+# 9. Restore clean data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && cp data/rides.csv.clean_backup data/rides.csv && \
+    cp dbt/seeds/rides.csv.clean_backup dbt/seeds/rides.csv"
+```
+
+### What to expect
+
+**Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 69 tests should pass. The income statement totals should be identical to the clean baseline (536,507.46 / 10,188.00 / 526,319.46). The staging guardrails silently filter out the bad rows.
+
+**Detection fault:** After injecting the invalid country "Atlantis", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
+
+Record the fault counts (how many rows of each type were injected) and the row counts (faulted CSV rows vs. staged rows) for the thesis tables.
 
 ---
 
