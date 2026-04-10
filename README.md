@@ -444,7 +444,7 @@ The `benchmarks/` directory measures execution time at increasing data scales, c
 
 > **Note on data loading:** The benchmark loads the rides table directly into DuckDB via `COPY` rather than `dbt seed`. `dbt seed` is designed for small reference files and runs out of memory at large scales (6.6M+ rows). The production pipeline uses `dbt seed` normally — this is a benchmark-only adaptation. Reference tables (`account_mapping`, `chart_of_accounts`) are still seeded via dbt in both cases.
 
-Data is scaled by increasing the fleet size. Four scales at roughly 10× increments: 90 scooters (~131K rides), 900 (~1.3M), 4,500 (~6.6M), and 9,000 (~13.1M). Each approach is timed 3 times per scale; the median is reported.
+Data is scaled by increasing the fleet size. Three scales at roughly 10× increments: 90 scooters (~131K rides), 900 (~1.3M), and 4,500 (~6.6M). Each approach is timed 3 times per scale; the median is reported. A fourth scale (9,000 scooters, ~13.1M rides) was attempted but exceeded the Docker container's 12 GB memory allocation during dbt processing, causing out-of-memory termination.
 
 ### Prerequisites
 

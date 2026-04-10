@@ -107,13 +107,28 @@ all_rejects as (
     select * from outlier_rejects
     union all
     select * from duplicate_rejects
+),
+
+-- Assign a sequence number within each (order_id, ride_id, reason) group
+-- so that duplicated rows with identical attributes get distinct IDs
+numbered_rejects as (
+    select *,
+        row_number() over (
+            partition by order_id, ride_id, rejection_reason
+            order by start_time
+        ) as _reject_rn
+    from all_rejects
 )
 
 select
     -- Deterministic surrogate key for incremental unique_key
+    -- Includes _reject_rn to guarantee uniqueness when the same
+    -- order_id+ride_id appears multiple times (e.g. a duplicated
+    -- row that also has a NULL amount)
     md5(cast(coalesce(cast(order_id as varchar), '_null_')
         || '-' || coalesce(cast(ride_id as varchar), '_null_')
-        || '-' || rejection_reason as varchar))
+        || '-' || rejection_reason
+        || '-' || cast(_reject_rn as varchar) as varchar))
         as quarantine_id,
 
     order_id,
