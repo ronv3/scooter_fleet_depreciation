@@ -1,4 +1,4 @@
-scooter_fleet_depreciation:
+scooter_financial_reporting:
   target: dev
   outputs:
     dev:

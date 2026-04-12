@@ -1,15 +1,15 @@
-name: "scooter_fleet_depreciation"
+name: "scooter_financial_reporting"
 version: "1.0.0"
 config-version: 2
 
-profile: "scooter_fleet_depreciation"
+profile: "scooter_financial_reporting"
 
 model-paths: ["models"]
 seed-paths: ["seeds"]
 test-paths: ["tests"]
 
 models:
-  scooter_fleet_depreciation:
+  scooter_financial_reporting:
     +schema: warehouse
     staging:
       # stg_rides overrides to incremental via in-model config()
@@ -24,5 +24,5 @@ models:
       # All report models override to incremental via in-model config()
       +materialized: table
 seeds:
-  scooter_fleet_depreciation:
+  scooter_financial_reporting:
     +schema: lake

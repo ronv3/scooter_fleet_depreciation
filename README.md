@@ -30,7 +30,7 @@ The only prerequisite is **Docker Desktop** running on your machine. All Python 
 ### 1. Clone and enter the project
 
 ```bash
-cd scooter_fleet_depreciation
+cd scooter_financial_reporting
 ```
 
 ### 2. Create environment file
@@ -341,7 +341,7 @@ The general ledger uses a **delete+insert** pattern implemented via a dbt pre-ho
 
 This makes the GL **append-only across periods**: once January is processed and February begins, January's data is untouched. But the current period can be safely reprocessed at any time — the pre-hook clears it before re-inserting. On first run (or `--full-refresh`), the pre-hook is skipped because there is no existing table to delete from.
 
-The same incremental pattern extends to `stg_rides`, `int_journal_entries`, and `fct_trial_balance` — each deletes and reinserts only the current period's rows. This means that historical data at every layer is stable and auditable. Reports are full-rebuild tables that re-aggregate from the trial balance each run.
+The same incremental pattern extends to every layer: `stg_rides`, `int_journal_entries`, `fct_trial_balance`, and all four report models — each deletes and reinserts only the current period's rows. This means that historical data at every layer is stable and auditable, building up a complete historical series of financial statements across all monthly runs.
 
 ---
 
